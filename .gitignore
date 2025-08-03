@@ -1,0 +1,8 @@
+# Ignore everything
+*
+
+# Allow these specific files
+!.gitignore
+!rupdpybrowser.py
+!README.md
+!setup.py
