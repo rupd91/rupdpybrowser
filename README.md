@@ -1,177 +1,107 @@
-# 🧠 `rupdpybrowser`
+# rupdpybrowser
 
-A flexible Python module built on **Playwright** that allows you to control Chromium (Playwright's bundled or external Chrome/Chromium) with options for persistent profiles, CDP debugging, and human-like automation.
+A lightweight Python wrapper for controlling Chromium browsers using Playwright and the Chrome DevTools Protocol (CDP). Supports both Playwright’s built-in Chromium and external Chromium instances with persistent profiles.
 
-## 📦 Features
-
-- Use **Playwright's bundled Chromium** or specify your **own Chrome/Chromium binary**.
-- Support for **persistent browser profiles** (cookie-saving, login-persistent).
-- Can **attach to running browser sessions** via CDP (`chrome.exe --remote-debugging-port=9222`).
-- Offers utility methods for:
-  - Navigating to pages
-  - Reading text from page
-  - Clicking elements by text or selector
-  - Filling inputs and selecting dropdowns
-  - Listing interactable elements (buttons, textboxes, links)
-
----
-
-## 🛠 Installation
-
-### Step 1: Install dependencies
+## Installation
 
 ```bash
-pip install playwright nest_asyncio
+# Install Chromium (ungoogleled)
+winget install --id=eloston.ungoogled-chromium -e
+
+# Install dependencies
+pip install playwright
 playwright install
+pip install psutil pywin32
 ```
 
-### Step 2: Install module (editable/development mode)
+## Usage
 
-```bash
-git clone https://github.com/yourusername/rupdpybrowser.git
-cd rupdpybrowser
-pip install -e .
-```
-
-> You can also just copy `rupdpybrowser.py` into your working directory if you're not using Git.
-
----
-
-## 🚀 Quick Start
+### Starting a Session
 
 ```python
-from rupdpybrowser import BrowserSession
+from rupdpybrowser import BrowserSessionStart
 
-session = BrowserSession()
-session.proc_goto("https://example.com")
-text = session.proc_readpage()
-print(text)
-session.close()
-```
+# 1. Playwright's Chromium | Non-Persistent
+session = BrowserSessionStart()
 
----
-
-## 🔄 Usage Modes
-
-### 1. **Playwright's Chromium (non-persistent)**
-
-```python
-session = BrowserSession()
-```
-
-### 2. **Playwright's Chromium (persistent profile)**
-
-```python
-session = BrowserSession(userprofile="myprofile")
-```
-
-### 3. **External Chrome/Chromium (non-persistent)**
-
-```python
-session = BrowserSession(chromium_path=r"C:\Path\To\chrome.exe")
-```
-
-### 4. **External Chrome/Chromium with persistent profile**
-
-```python
-session = BrowserSession(
-    chromium_path=r"C:\Path\To\chrome.exe",
-    userprofile="myprofile"
+# 2. External Chromium with profile
+session = BrowserSessionStart(
+    chromium_path='C:/Path/To/Chromium/chrome.exe',
+    userprofile='rupdpybrowser'
 )
-```
 
-### 5. **Connect to an existing Chromium session via CDP**
-
-Run Chromium first:
-
-```bash
-chrome.exe --remote-debugging-port=9222
-```
-
-Then connect:
-
-```python
-session = BrowserSession(cdp_url="http://localhost:9222")
-```
-
----
-
-## 🧩 Dictionary-Based Instantiation
-
-```python
+# 3. Connect using dictionary
 params = {
-    "chromium_path": r"C:\Path\To\chrome.exe",
-    "userprofile": "sessiondata"
+    'chromium_path': 'C:/Path/To/Chromium/chrome.exe',
+    'userprofile': 'rupdpybrowser'
 }
-session = BrowserSession(**params)
+session = BrowserSessionStart(**params)
 ```
 
----
+## Functions
 
-## 🧪 Utilities
-
-### Navigate to URL
+### Page Navigation
 
 ```python
 session.proc_goto("https://example.com")
 ```
 
-### Read Page Text
+### Text Reading
 
 ```python
-text = session.proc_readpage()
+text = session.proc_readtext()               # Reads full body
+text = session.proc_readtext("elementID")    # Reads specific element
 ```
 
-### Click an Element
+### Click / Edit Elements
 
 ```python
-session.proc_click("Login")
-session.proc_click("#submit-btn")
+session.proc_click("Submit")        # Click by text
+session.proc_click("#submitBtn")    # Click by selector
+
+session.proc_edit("#username", "rahul")
+session.proc_edit("select#state", "Michigan")
 ```
 
-### Fill an Input or Dropdown
+### Option Extraction
 
 ```python
-session.proc_edit("input[name='email']", "test@example.com")
-session.proc_edit("select#country", "India")
+options = session.proc_getoptions("Login")
+for opt in options:
+    print(opt)
 ```
 
-### Get Interactable Elements
+## Managing Browser Sessions
+
+### Check Running Chromium Instances
 
 ```python
-options = session.proc_getoptions()
-for typ, label, selector in options:
-    print(f"{typ}: {label} → {selector}")
+from rupdpybrowser import BrowserSessionInfo
+BrowserSessionInfo()
 ```
 
----
-
-## 🧼 Clean Exit
-
-Always close sessions after use:
+### Close a Chromium Session
 
 ```python
-session.close()
+from rupdpybrowser import BrowserSessionClose
+BrowserSessionClose(9225)
 ```
 
----
+### Hide or Show Chromium Windows
 
-## 📍 Notes
+```python
+from rupdpybrowser import BrowserSessionSetVisibility
 
-- Playwright downloads its own Chromium:  
-  `%USERPROFILE%\AppData\Local\ms-playwright\`
-  
-- External Chromium must support CDP (`--remote-debugging-port`).
+# Hide
+BrowserSessionSetVisibility(9225, hide=True)
 
-- You can use `nest_asyncio` to run this inside Jupyter/IPython:
-  
-  ```python
-  import nest_asyncio
-  nest_asyncio.apply()
-  ```
+# Show
+BrowserSessionSetVisibility(9225, hide=False)
+```
 
----
+## Notes
 
-## 📄 License
+- External Chromium must be launched with `--remote-debugging-port` enabled.
+- Persistent profiles allow login sessions and browser state to be retained.
+- Set `headlessmethod=True` if using default Playwright mode and want background execution.
 
-MIT License
