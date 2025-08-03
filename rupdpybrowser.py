@@ -15,97 +15,97 @@ import os
 import time
 import socket
 import subprocess
+import requests
+import psutil
+import re
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 import nest_asyncio
+
+import psutil
+import win32gui
+import win32con
+import win32process
 nest_asyncio.apply()
 
-class BrowserSession:
+
+class BrowserSessionStart:
+    def _is_cdp_alive(self):
+        try:
+            with socket.create_connection(("localhost", self.port), timeout=1):
+                return True
+        except:
+            return False
+
     def __init__(
         self,
         headlessmethod=False,
         userprofile=None,
         cdp_url=None,
         cdp_port=None,
-        browser_type='chromium',
         chromium_path=None
     ):
-        self.playwright = sync_playwright().start()
-        self.browser_type = browser_type
         self.page = None
         self.browser = None
         self.context = None
-
-        self.port = cdp_port or 9222
+        self.port = int(cdp_port) if cdp_port else 9222
         self.cdp_url = cdp_url or f"http://localhost:{self.port}"
+        self.chromium_path = chromium_path
+        self.userprofile = str(Path(__file__).parent / userprofile) if userprofile else None
 
-        # Get launcher (Playwright's built-in)
-        self.launcher = getattr(self.playwright, self.browser_type, None)
-        if self.launcher is None:
-            raise ValueError(f"Unsupported browser type: {self.browser_type}")
+        self.playwright = sync_playwright().start()
+        self.launcher = self.playwright.chromium
 
-        # Set chromium path (optional external)
-        self.chromium_path = chromium_path  # If None, fallback to Playwright's built-in
+        if chromium_path:
+            if not self._is_cdp_alive():
+                self._launch_real_chromium()
+                self._wait_for_cdp()
+            else:
+                print(f"#. Reusing Chromium at {self.cdp_url}")
+            self.browser = self.playwright.chromium.connect_over_cdp(self.cdp_url)
+            self.context = self.browser.contexts[0] if self.browser.contexts else self.browser.new_context()
 
-        # Profile path relative to script
-        if userprofile:
-            script_dir = Path(__file__).parent.resolve()
-            self.userprofile = str(Path(script_dir) / userprofile)
-        else:
-            self.userprofile = None
+        elif self.userprofile and self.chromium_path:
+            print(f"#. Connecting to external Chromium with profile: {self.userprofile}")
 
-        # === USE CASES ===
+            if not self._is_cdp_alive():
+                self._launch_real_chromium()
+                self._wait_for_cdp()
 
-        # 1. External Chromium via CDP (auto-launch)
-        if self.chromium_path:
-            self._launch_real_chromium()
-            self._wait_for_cdp()
             self.browser = self.launcher.connect_over_cdp(self.cdp_url)
             self.context = self.browser.contexts[0] if self.browser.contexts else self.browser.new_context()
 
-        # 2. User-supplied CDP URL
-        elif cdp_url:
-            self.browser = self.launcher.connect_over_cdp(self.cdp_url)
-            self.context = self.browser.contexts[0]
 
-        # 3. Built-in Chromium with persistent context (only supported for Chromium)
-        elif self.userprofile and self.browser_type == 'chromium':
-            print(f"Using built-in Chromium with persistent profile: {self.userprofile}")
-            self.browser = self.launcher.launch_persistent_context(
-                user_data_dir=self.userprofile,
-                headless=headlessmethod,
-                ignore_https_errors=True
-            )
-            self.context = self.browser
-
-        # 4. Built-in Chromium regular launch
         else:
-            print("Using Playwright's built-in Chromium.")
+            print("#. Start Default Chromium (non-persistent)")
             self.browser = self.launcher.launch(headless=headlessmethod)
-            self.context = self.browser.new_context(
-                ignore_https_errors=True,
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                )
-            )
+            self.context = self.browser.new_context(ignore_https_errors=True)
 
         self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
 
-    def _launch_real_chromium(self):
-        print(f"Launching external Chromium: {self.chromium_path} --remote-debugging-port={self.port}")
-        
-        user_data_dir = self.userprofile or "C:/Temp/ExternalChromeProfile"
-        
-        subprocess.Popen([
-            self.chromium_path,
-            f"--remote-debugging-port={self.port}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            f"--user-data-dir={user_data_dir}"
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"#. Session ID: {id(self)}")
+        print(f"#. CDP Port: {self.port}")
+        print(f"#. CDP URL: {self.cdp_url}")
+        print(f"#. Profile: {self.userprofile or 'None'}")
 
+    def _launch_real_chromium(self):
+            print(f"Launching external Chromium: {self.chromium_path} --remote-debugging-port={self.port}")
+            user_data_dir = self.userprofile or "C:/Temp/ExternalChromeProfile"
+
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = 6  # 6 = SW_MINIMIZE
+
+            subprocess.Popen([
+                self.chromium_path,
+                f"--remote-debugging-port={self.port}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                f"--user-data-dir={user_data_dir}",
+                "--app=data:text/html,<title>Ready</title>",
+                "--disable-background-mode"
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+               startupinfo=si)
 
     def _wait_for_cdp(self, timeout=10):
         start = time.time()
@@ -118,11 +118,11 @@ class BrowserSession:
                 time.sleep(0.5)
         raise TimeoutError(f"CDP port {self.port} not available after {timeout} seconds.")
 
-
-    def proc_readpage(self):
+    def proc_readtext(self, element_id=None):
         if not self.page:
             raise Exception("No active page. Use proc_goto() or proc_start() first.")
-        return self.page.evaluate("document.body.innerText")
+        selector = f"#{element_id}" if element_id else "body"
+        return self.page.inner_text(selector)
 
     def proc_goto(self, url):
             if self.context:
@@ -274,4 +274,81 @@ class BrowserSession:
                     # f.write("\n".join(export_lines))
 
             return results
+            
+ 
 
+def BrowserSessionClose(target_port):
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            cmdline = proc.info['cmdline'] or []
+            if any('chrome' in part.lower() for part in cmdline):
+                for arg in cmdline:
+                    if f'--remote-debugging-port={target_port}' in arg and '--type=renderer' not in cmdline:
+                        print(f"#. Killing main Chromium PID {proc.pid} on port {target_port}")
+                        proc.kill()
+                        return
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    print("#. No Chromium main process found with given port.")
+
+
+def BrowserSessionInfo():
+    results = []
+    pattern = re.compile(r"--remote-debugging-port=(\d+)")
+    
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            name = proc.info['name'] or ''
+            cmdline = proc.info['cmdline'] or []
+            if 'chrome' in name.lower():
+                cmd_str = ' '.join(cmdline)
+                match = pattern.search(cmd_str)
+                if match:
+                    port = int(match.group(1))
+                    results.append((proc.pid, port, cmd_str))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    for pid, port, cmd in results:
+        print(f"#. PID: {pid} | Port: {port} | CMD: {cmd}\n\n")
+    
+
+
+def BrowserSessionSetVisibility(target_port, hide=True):
+    target_pids = []
+
+    # Gather all PIDs using the target port
+    for proc in psutil.process_iter(['pid', 'cmdline']):
+        try:
+            cmdline = proc.info['cmdline'] or []
+            if any('chrome' in part.lower() for part in cmdline):
+                for arg in cmdline:
+                    if f'--remote-debugging-port={target_port}' in arg:
+                        target_pids.append(proc.pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    if not target_pids:
+        print("#. No Chromium processes found with that port.")
+        return
+
+    print(f"#. Found Chromium PIDs on port {target_port}: {target_pids}")
+
+    def enum_handler(hwnd, _):
+        if not win32gui.IsWindowVisible(hwnd) or not win32gui.IsWindowEnabled(hwnd):
+            return
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        if pid in target_pids:
+            title = win32gui.GetWindowText(hwnd)
+            if not title.strip():
+                return
+            if hide:
+                print(f"#. Hiding window: {title} (PID: {pid})")
+                win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
+                win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+            else:
+                print(f"#. Restoring window: {title} (PID: {pid})")
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                win32gui.BringWindowToTop(hwnd)
+
+    win32gui.EnumWindows(enum_handler, None)
